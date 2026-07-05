@@ -859,11 +859,11 @@
         <div class="model-grid" id="modelGrid">
           <div class="model-opt" data-model="tiny">tiny</div>
           <div class="model-opt" data-model="base">base</div>
-          <div class="model-opt" data-model="small">small</div>
-          <div class="model-opt active" data-model="medium">medium</div>
-          <div class="model-opt" data-model="large">large</div>
+          <div class="model-opt active" data-model="small">small</div>
+          <div class="model-opt" data-model="medium">medium</div>
+          <div class="model-opt" data-model="large-v3">large</div>
         </div>
-        <div class="model-note" id="modelNote">Balanced accuracy and speed. Good default for most recordings.</div>
+        <div class="model-note" id="modelNote">Solid accuracy for everyday recordings at moderate speed. Default model.</div>
       </div>
       <div class="field">
         <label class="field-label" for="langSelect">Language</label>
@@ -926,7 +926,7 @@
   </div>
 </main>
 
-<footer>Verbatim runs on Whisper (medium by default) · audio is auto-extracted from video · segments are timed to the second · nothing leaves this session until you download</footer>
+<footer>Verbatim runs on Whisper (small by default) · audio is auto-extracted from video · segments are timed to the second · nothing leaves this session until you download</footer>
 </div>
 </div>
 
@@ -1063,10 +1063,10 @@ document.documentElement.style.scrollBehavior = 'smooth';
     tiny:'Fastest option. Best for quick drafts or very clear audio.',
     base:'Quick turnaround with modest accuracy gains over tiny.',
     small:'Solid accuracy for everyday recordings at moderate speed.',
-    medium:'Balanced accuracy and speed. Good default for most recordings.',
-    large:'Highest accuracy. Slower — best for noisy audio or final delivery.'
+    medium:'Balanced accuracy and speed. A step up from small.',
+    'large-v3':'Highest accuracy. Slower — best for noisy audio or final delivery.'
   };
-  let selectedModel = 'medium';
+  let selectedModel = 'small';
   modelGrid.addEventListener('click', (e)=>{
     const opt = e.target.closest('.model-opt');
     if(!opt) return;
@@ -1156,6 +1156,7 @@ document.documentElement.style.scrollBehavior = 'smooth';
   });
 
   function resetOutput(){
+    stopPolling();
     segments = [];
     transcriptBody.style.display = 'none';
     transcriptBody.innerHTML = '';
@@ -1165,9 +1166,18 @@ document.documentElement.style.scrollBehavior = 'smooth';
     emptyState.style.display = 'flex';
   }
 
-  // Point this at wherever the backend from /backend is actually running.
-  // Local dev default: uvicorn app:app --reload --port 8000
-  const API_BASE_URL = "https://verbertive-server-ai-27e28b562134.herokuapp.com";
+  // Base URL of the transcription API (see API_DOCUMENTATION.md).
+  const API_BASE_URL = "https://verbertive-server-ai.herokuapp.com";
+
+  const POLL_INTERVAL_MS = 2500;
+  const POLL_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+  let pollTimer = null;
+  let activeJobId = null;
+
+  function stopPolling(){
+    if(pollTimer){ clearTimeout(pollTimer); pollTimer = null; }
+    activeJobId = null;
+  }
 
   transcribeBtn.addEventListener('click', async ()=>{
     if(!currentFile) return;
@@ -1175,6 +1185,8 @@ document.documentElement.style.scrollBehavior = 'smooth';
       document.getElementById('signInGate').style.display = 'flex';
       return;
     }
+
+    stopPolling();
     transcribeBtn.disabled = true;
     emptyState.style.display = 'none';
     transcriptBody.style.display = 'none';
@@ -1182,7 +1194,7 @@ document.documentElement.style.scrollBehavior = 'smooth';
     searchRow.style.display = 'none';
     progressState.style.display = 'flex';
     progressLog.innerHTML = '';
-    progressHeadline.textContent = "Loading Whisper model '"+selectedModel+"'…";
+    progressHeadline.textContent = 'Uploading file…';
 
     const logLine = (text, ok, isError)=>{
       const d = document.createElement('div');
@@ -1190,12 +1202,14 @@ document.documentElement.style.scrollBehavior = 'smooth';
       if(isError) d.style.color = '#c0392b';
       d.textContent = text;
       progressLog.appendChild(d);
+      progressLog.scrollTop = progressLog.scrollHeight;
     };
 
     const isVideo = isVideoFile(currentFile);
-    logLine('$ python transcribe.py "'+currentFile.name+'" --model '+selectedModel+(langSelect.value ? ' --lang '+langSelect.value : ''));
+    logLine('$ upload "'+currentFile.name+'" --model '+selectedModel+(langSelect.value ? ' --lang '+langSelect.value : ' --lang auto'));
 
     try{
+      // ---- 1. POST /transcribe — upload the file, get back a job_id ----
       const idToken = await currentUser.getIdToken();
 
       const formData = new FormData();
@@ -1203,35 +1217,89 @@ document.documentElement.style.scrollBehavior = 'smooth';
       formData.append('model', selectedModel);
       if(langSelect.value) formData.append('language', langSelect.value);
 
-      if(isVideo){
-        logLine('Extracting audio track (ffmpeg)...');
-      }
-      logLine("Loading Whisper model '"+selectedModel+"'...");
-      progressHeadline.textContent = isVideo ? 'Extracting audio & transcribing…' : 'Transcribing audio…';
-      logLine('Transcribing '+currentFile.name+' ... this can take a while for longer files');
-
-      const resp = await fetch(API_BASE_URL + '/transcribe', {
+      const startResp = await fetch(API_BASE_URL + '/transcribe', {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + idToken },
         body: formData
+        // Content-Type is NOT set manually — the browser sets the multipart boundary.
       });
 
-      if(!resp.ok){
-        let detail = resp.statusText;
-        try{ const errJson = await resp.json(); detail = errJson.detail || detail; }catch(e){}
-        throw new Error(detail);
+      if(!startResp.ok){
+        let detail;
+        try{ const errJson = await startResp.json(); detail = errJson.detail; }catch(e){}
+        if(startResp.status === 401) throw new Error(detail || 'Your sign-in has expired. Please sign in again.');
+        if(startResp.status === 400) throw new Error(detail || 'Invalid model selection.');
+        if(startResp.status === 413) throw new Error(detail || 'This file is too large for the current upload limit.');
+        if(startResp.status === 500) throw new Error('The server hit a problem on its end. Please try again later.');
+        throw new Error(detail || ('Request failed: '+startResp.status));
       }
 
-      const data = await resp.json();
-      segments = (data.segments || []).map(s => ({ start: s.start, end: s.end, text: s.text }));
+      const startData = await startResp.json();
+      activeJobId = startData.job_id;
+      logLine('Queued'+(isVideo ? ' — audio will be extracted from the video server-side' : '')+'. Job ID: '+activeJobId);
+      progressHeadline.textContent = isVideo ? 'Extracting audio & transcribing…' : 'Transcribing audio…';
+      logLine("Running Whisper model '"+selectedModel+"'… this can take a while for longer files");
 
-      logLine('Done. Transcript saved to: '+baseName+'.txt', true);
-      renderTranscript();
-      saveToHistory();
+      // ---- 2. GET /status/{job_id} — poll until finished or failed ----
+      const pollStart = Date.now();
+      let sawStarted = false;
+
+      const poll = async ()=>{
+        if(activeJobId !== startData.job_id) return; // superseded by a newer job
+        try{
+          const statusResp = await fetch(API_BASE_URL + '/status/' + startData.job_id, {
+            headers: { 'Authorization': 'Bearer ' + (await currentUser.getIdToken()) }
+          });
+
+          if(!statusResp.ok){
+            let detail;
+            try{ const errJson = await statusResp.json(); detail = errJson.detail; }catch(e){}
+            if(statusResp.status === 401) throw new Error(detail || 'Your sign-in has expired. Please sign in again.');
+            if(statusResp.status === 404) throw new Error(detail || "This job wasn't found — it may have expired (results are kept for 1 hour after finishing).");
+            throw new Error(detail || ('Request failed: '+statusResp.status));
+          }
+
+          const statusData = await statusResp.json();
+
+          if(statusData.status === 'started' && !sawStarted){
+            sawStarted = true;
+            logLine('Transcription started…');
+          }
+
+          if(statusData.status === 'finished'){
+            segments = (statusData.result.segments || []).map(s => ({ start: s.start, end: s.end, text: s.text }));
+            logLine('Done. Transcript saved to: '+baseName+'.txt', true);
+            stopPolling();
+            renderTranscript();
+            saveToHistory();
+            transcribeBtn.disabled = false;
+            transcribeBtn.textContent = 'Transcribe again';
+            return;
+          }
+
+          if(statusData.status === 'failed'){
+            throw new Error(statusData.error || 'Transcription failed.');
+          }
+
+          // still queued/started — keep polling
+          if(Date.now() - pollStart > POLL_TIMEOUT_MS){
+            throw new Error('Timed out waiting for transcription.');
+          }
+          pollTimer = setTimeout(poll, POLL_INTERVAL_MS);
+        }catch(err){
+          stopPolling();
+          logLine('Error: ' + (err && err.message ? err.message : 'transcription failed.'), false, true);
+          progressHeadline.textContent = 'Transcription failed';
+          transcribeBtn.disabled = false;
+          transcribeBtn.textContent = 'Transcribe again';
+        }
+      };
+
+      pollTimer = setTimeout(poll, POLL_INTERVAL_MS);
     }catch(err){
+      stopPolling();
       logLine('Error: ' + (err && err.message ? err.message : 'transcription failed.'), false, true);
       progressHeadline.textContent = 'Transcription failed';
-    }finally{
       transcribeBtn.disabled = false;
       transcribeBtn.textContent = 'Transcribe again';
     }
