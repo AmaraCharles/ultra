@@ -937,23 +937,15 @@
 // Also enable the Google sign-in provider under Authentication → Sign-in method,
 // and add the domain this page is hosted on under Authentication → Settings → Authorized domains.
 // ============================================================
-// const firebaseConfig = {
-//   apiKey: "YOUR_API_KEY",
-//   authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-//   projectId: "YOUR_PROJECT_ID",
-//   storageBucket: "YOUR_PROJECT_ID.appspot.com",
-//   messagingSenderId: "YOUR_SENDER_ID",
-//   appId: "YOUR_APP_ID"
-// };
-
 const firebaseConfig = {
-  apiKey: "AIzaSyBrDmwpkOZKIn0CRrXHORbucO7hNJOP8Rg",
-  authDomain: "crud-76c7f.firebaseapp.com",
-  projectId: "crud-76c7f",
-  storageBucket: "crud-76c7f.appspot.com",
-  messagingSenderId: "884922387521",
-  appId: "1:884922387521:web:b76f4c3edd15158f130ac0"
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_PROJECT_ID.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId: "YOUR_APP_ID"
 };
+
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const googleProvider = new firebase.auth.GoogleAuthProvider();
@@ -1173,51 +1165,9 @@ document.documentElement.style.scrollBehavior = 'smooth';
     emptyState.style.display = 'flex';
   }
 
-  // Sample sentence bank used to populate demo segments — in a full deployment
-  // these lines are produced by whisper.load_model(...).transcribe(...) in transcribe.py.
-  const sampleLines = [
-    "So today we're going to walk through the whole process from start to finish.",
-    "The first thing to get right is making sure the input levels are consistent.",
-    "Once that's sorted, the rest of the pipeline tends to take care of itself.",
-    "A few people asked about turnaround time, so let's cover that next.",
-    "There were a couple of edge cases we ran into during testing.",
-    "Overall the results held up well across the different samples we tried.",
-    "Let's take a quick look at the numbers before wrapping up this section.",
-    "That's roughly where things stood by the end of last week.",
-    "Moving on, I want to touch on a couple of open questions.",
-    "We'll pick this back up in the next part of the recording."
-  ];
-
-  function getMediaDuration(file){
-    return new Promise((resolve)=>{
-      const el = document.createElement(isVideoFile(file) ? 'video' : 'audio');
-      el.preload = 'metadata';
-      el.onloadedmetadata = ()=>{
-        const d = isFinite(el.duration) ? el.duration : 0;
-        URL.revokeObjectURL(el.src);
-        resolve(d || 180);
-      };
-      el.onerror = ()=>resolve(180);
-      el.src = URL.createObjectURL(file);
-    });
-  }
-
-  function buildSegments(duration){
-    const segCount = Math.max(4, Math.min(30, Math.round(duration / 8)));
-    const segs = [];
-    let t = 0;
-    const step = duration / segCount;
-    for(let i=0;i<segCount;i++){
-      const start = t;
-      const end = Math.min(duration, t + step);
-      segs.push({
-        start, end,
-        text: sampleLines[i % sampleLines.length]
-      });
-      t = end;
-    }
-    return segs;
-  }
+  // Point this at wherever the backend from /backend is actually running.
+  // Local dev default: uvicorn app:app --reload --port 8000
+  const API_BASE_URL = "https://verbertive-server-ai-27e28b562134.herokuapp.com";
 
   transcribeBtn.addEventListener('click', async ()=>{
     if(!currentFile) return;
@@ -1234,39 +1184,58 @@ document.documentElement.style.scrollBehavior = 'smooth';
     progressLog.innerHTML = '';
     progressHeadline.textContent = "Loading Whisper model '"+selectedModel+"'…";
 
-    const logLine = (text, ok)=>{
+    const logLine = (text, ok, isError)=>{
       const d = document.createElement('div');
       if(ok) d.classList.add('ok');
+      if(isError) d.style.color = '#c0392b';
       d.textContent = text;
       progressLog.appendChild(d);
     };
 
     const isVideo = isVideoFile(currentFile);
     logLine('$ python transcribe.py "'+currentFile.name+'" --model '+selectedModel+(langSelect.value ? ' --lang '+langSelect.value : ''));
-    await wait(400);
-    if(isVideo){
-      logLine('Extracting audio track (ffmpeg)...');
-      await wait(700);
+
+    try{
+      const idToken = await currentUser.getIdToken();
+
+      const formData = new FormData();
+      formData.append('file', currentFile);
+      formData.append('model', selectedModel);
+      if(langSelect.value) formData.append('language', langSelect.value);
+
+      if(isVideo){
+        logLine('Extracting audio track (ffmpeg)...');
+      }
+      logLine("Loading Whisper model '"+selectedModel+"'...");
+      progressHeadline.textContent = isVideo ? 'Extracting audio & transcribing…' : 'Transcribing audio…';
+      logLine('Transcribing '+currentFile.name+' ... this can take a while for longer files');
+
+      const resp = await fetch(API_BASE_URL + '/transcribe', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + idToken },
+        body: formData
+      });
+
+      if(!resp.ok){
+        let detail = resp.statusText;
+        try{ const errJson = await resp.json(); detail = errJson.detail || detail; }catch(e){}
+        throw new Error(detail);
+      }
+
+      const data = await resp.json();
+      segments = (data.segments || []).map(s => ({ start: s.start, end: s.end, text: s.text }));
+
+      logLine('Done. Transcript saved to: '+baseName+'.txt', true);
+      renderTranscript();
+      saveToHistory();
+    }catch(err){
+      logLine('Error: ' + (err && err.message ? err.message : 'transcription failed.'), false, true);
+      progressHeadline.textContent = 'Transcription failed';
+    }finally{
+      transcribeBtn.disabled = false;
+      transcribeBtn.textContent = 'Transcribe again';
     }
-    logLine("Loading Whisper model '"+selectedModel+"'...");
-    await wait(900);
-    logLine('Transcribing '+currentFile.name+' ...');
-    progressHeadline.textContent = isVideo ? 'Extracting audio & transcribing…' : 'Transcribing audio…';
-    await wait(1100);
-
-    const duration = await getMediaDuration(currentFile);
-    segments = buildSegments(duration);
-
-    logLine('Done. Transcript saved to: '+baseName+'.txt', true);
-    await wait(500);
-
-    renderTranscript();
-    saveToHistory();
-    transcribeBtn.disabled = false;
-    transcribeBtn.textContent = 'Transcribe again';
   });
-
-  function wait(ms){ return new Promise(r=>setTimeout(r, ms)); }
 
   function renderTranscript(){
     progressState.style.display = 'none';
