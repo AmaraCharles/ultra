@@ -268,18 +268,19 @@
 
   #appSection{position:relative; min-height:100vh;}
 
-  /* ---------- Sign-in gate (paywall) ---------- */
+  /* ---------- Sign-in gate (modal, hidden until triggered) ---------- */
   .gate{
-    position:absolute;
+    position:fixed;
     inset:0;
     background:rgba(18,41,58,0.55);
     backdrop-filter:blur(3px);
-    display:flex;
+    display:none;
     align-items:center;
     justify-content:center;
-    z-index:100;
+    z-index:1000;
     padding:20px;
   }
+  .gate.open{display:flex;}
   .gate-card{
     background:var(--white);
     border-radius:16px;
@@ -666,6 +667,30 @@
     50%{height:40px; opacity:1;}
   }
 
+  .progress-bar-track{
+    width:100%;
+    max-width:380px;
+    height:6px;
+    background:var(--sky-100);
+    border-radius:100px;
+    overflow:hidden;
+  }
+  .progress-bar-fill{
+    height:100%;
+    width:0%;
+    background:var(--sky-500);
+    border-radius:100px;
+    transition:width .25s ease;
+  }
+  .progress-bar-fill.indeterminate{
+    width:40% !important;
+    animation:indeterminate 1.2s ease-in-out infinite;
+  }
+  @keyframes indeterminate{
+    0%{transform:translateX(-100%);}
+    100%{transform:translateX(250%);}
+  }
+
   .progress-log{
     font-size:12px;
     font-weight:500;
@@ -681,6 +706,20 @@
   .progress-log div{padding:3px 0; opacity:0; animation:fadeIn .3s ease forwards;}
   @keyframes fadeIn{to{opacity:1;}}
   .progress-log .ok{color:var(--good); font-weight:700;}
+
+  .cancel-btn{
+    background:var(--white);
+    border:1px solid var(--line);
+    color:var(--ink-soft);
+    font-family:var(--font);
+    font-weight:600;
+    font-size:12.5px;
+    padding:9px 18px;
+    border-radius:7px;
+    cursor:pointer;
+    transition:border-color .12s ease, color .12s ease, background .12s ease;
+  }
+  .cancel-btn:hover{border-color:#c0392b; color:#c0392b; background:#fdf3f2;}
 
   footer{
     text-align:center;
@@ -708,7 +747,7 @@
     <div class="nav-links">
       <a href="#features">Features</a>
       <a href="#how-it-works">How it works</a>
-      <a href="#appSection" class="nav-cta">Start transcribing free</a>
+      <a href="#" class="nav-cta js-start-cta">Start transcribing free</a>
     </div>
   </nav>
 
@@ -718,7 +757,7 @@
       <h2>Turn audio and video into timestamped text.</h2>
       <p>Drop in a recording, pick a model size, and get a searchable transcript timed to the second — ready to copy or download as a plain .txt file.</p>
       <div class="hero-actions">
-        <a href="#appSection" class="cta-primary">Start transcribing free</a>
+        <a href="#" class="cta-primary js-start-cta">Start transcribing free</a>
         <span class="hero-note">No credit card · just a Google account</span>
       </div>
     </div>
@@ -770,9 +809,9 @@
         <p>Every line is stamped <span class="mono">[00:00:00 - 00:00:04]</span>, matching the transcript format you'd get from the command line.</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon">5</div>
-        <h4>Five model sizes</h4>
-        <p>Trade speed for accuracy — tiny for a fast draft, large for the cleanest read.</p>
+        <div class="feature-icon">3</div>
+        <h4>Three model sizes</h4>
+        <p>Trade speed for accuracy — tiny for a fast draft, small for the cleanest everyday read.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">S</div>
@@ -784,7 +823,7 @@
 
   <section class="cta-band">
     <h3>Ready to get your words down?</h3>
-    <a href="#appSection" class="cta-primary">Start transcribing free</a>
+    <a href="#" class="cta-primary js-start-cta">Start transcribing free</a>
   </section>
 
 </div>
@@ -860,10 +899,8 @@
           <div class="model-opt" data-model="tiny">tiny</div>
           <div class="model-opt" data-model="base">base</div>
           <div class="model-opt active" data-model="small">small</div>
-          <div class="model-opt" data-model="medium">medium</div>
-          <div class="model-opt" data-model="large-v3">large</div>
         </div>
-        <div class="model-note" id="modelNote">Solid accuracy for everyday recordings at moderate speed. Default model.</div>
+        <div class="model-note" id="modelNote">Solid accuracy for everyday recordings at moderate speed. Good default for most recordings.</div>
       </div>
       <div class="field">
         <label class="field-label" for="langSelect">Language</label>
@@ -918,7 +955,11 @@
       <div id="progressState" class="state-wrap" style="display:none;">
         <div class="wave" id="waveAnim"></div>
         <div class="headline" id="progressHeadline">Loading Whisper model…</div>
+        <div class="progress-bar-track" id="progressBarTrack">
+          <div class="progress-bar-fill" id="progressBarFill"></div>
+        </div>
         <div class="progress-log" id="progressLog"></div>
+        <button class="cancel-btn" id="cancelBtn" type="button">Cancel</button>
       </div>
 
       <div id="transcriptBody" class="transcript-body" style="display:none;"></div>
@@ -926,7 +967,7 @@
   </div>
 </main>
 
-<footer>Verbatim runs on Whisper (small by default) · audio is auto-extracted from video · segments are timed to the second · nothing leaves this session until you download</footer>
+<footer>Verbatim runs on Whisper (medium by default) · audio is auto-extracted from video · segments are timed to the second · nothing leaves this session until you download</footer>
 </div>
 </div>
 
@@ -938,12 +979,12 @@
 // and add the domain this page is hosted on under Authentication → Settings → Authorized domains.
 // ============================================================
 const firebaseConfig = {
-  apiKey: "AIzaSyBrDmwpkOZKIn0CRrXHORbucO7hNJOP8Rg",
-  authDomain: "crud-76c7f.firebaseapp.com",
-  projectId: "crud-76c7f",
-  storageBucket: "crud-76c7f.appspot.com",
-  messagingSenderId: "884922387521",
-  appId: "1:884922387521:web:b76f4c3edd15158f130ac0"
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_PROJECT_ID.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId: "YOUR_APP_ID"
 };
 
 firebase.initializeApp(firebaseConfig);
@@ -961,23 +1002,55 @@ const signOutBtn = document.getElementById('signOutBtn');
 const googleBtnLabel = document.getElementById('googleBtnLabel');
 
 let currentUser = null;
+let pendingAppEntry = false; // true when the user actually asked to reach the app (vs. just browsing signed out)
 
-function showGate(){
-  signInGate.style.display = 'flex';
-  appContent.style.display = 'none';
-  userChip.style.display = 'none';
+function openGate(){
+  signInGate.classList.add('open');
+  gateError.classList.remove('show');
+}
+function closeGate(){
+  signInGate.classList.remove('open');
 }
 function showApp(user){
-  signInGate.style.display = 'none';
+  closeGate();
   appContent.style.display = 'block';
   userChip.style.display = 'flex';
   userAvatar.src = user.photoURL || '';
   userName.textContent = user.displayName || user.email || 'Signed in';
 }
+function showSignedOut(){
+  appContent.style.display = 'none';
+  userChip.style.display = 'none';
+}
 
 auth.onAuthStateChanged((user)=>{
+  const wasSignedOut = !currentUser;
   currentUser = user;
-  if(user){ showApp(user); } else { showGate(); }
+  if(user){
+    showApp(user);
+    // Only jump to the app if the user actually clicked in to get here —
+    // don't yank someone who's just idly signed in from a previous visit.
+    if(pendingAppEntry){
+      pendingAppEntry = false;
+      document.getElementById('appSection').scrollIntoView({ behavior: 'smooth' });
+    }
+  } else {
+    showSignedOut();
+  }
+});
+
+// Landing-page CTAs: open the sign-in modal in place — no scrolling.
+// If already signed in, just take them straight to the app.
+document.querySelectorAll('.js-start-cta').forEach(el=>{
+  el.addEventListener('click', (e)=>{
+    e.preventDefault();
+    if(currentUser){
+      document.getElementById('appSection').scrollIntoView({ behavior: 'smooth' });
+    } else {
+      pendingAppEntry = true;
+      openGate();
+    }
+  });
 });
 
 googleSignInBtn.addEventListener('click', async ()=>{
@@ -1062,9 +1135,7 @@ document.documentElement.style.scrollBehavior = 'smooth';
   const modelNotes = {
     tiny:'Fastest option. Best for quick drafts or very clear audio.',
     base:'Quick turnaround with modest accuracy gains over tiny.',
-    small:'Solid accuracy for everyday recordings at moderate speed.',
-    medium:'Balanced accuracy and speed. A step up from small.',
-    'large-v3':'Highest accuracy. Slower — best for noisy audio or final delivery.'
+    small:'Solid accuracy for everyday recordings at moderate speed. Good default for most recordings.'
   };
   let selectedModel = 'small';
   modelGrid.addEventListener('click', (e)=>{
@@ -1156,7 +1227,6 @@ document.documentElement.style.scrollBehavior = 'smooth';
   });
 
   function resetOutput(){
-    stopPolling();
     segments = [];
     transcriptBody.style.display = 'none';
     transcriptBody.innerHTML = '';
@@ -1164,29 +1234,187 @@ document.documentElement.style.scrollBehavior = 'smooth';
     searchRow.style.display = 'none';
     progressState.style.display = 'none';
     emptyState.style.display = 'flex';
+    const barFill = document.getElementById('progressBarFill');
+    if(barFill){ barFill.classList.remove('indeterminate'); barFill.style.width = '0%'; }
   }
 
-  // Base URL of the transcription API (see API_DOCUMENTATION.md).
-  const API_BASE_URL = "https://verbertive-server-ai-27e28b562134.herokuapp.com";
+  // Point this at wherever the backend from /backend is actually running.
+  // Local dev default: uvicorn app:app --reload --port 8000
+  const API_BASE_URL = "http://localhost:8000";
 
-  const POLL_INTERVAL_MS = 2500;
-  const POLL_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
-  let pollTimer = null;
-  let activeJobId = null;
+  // Files above this size are silently split into chunks on the way up —
+  // the user only ever sees one job, one progress bar, one result.
+  const CHUNK_THRESHOLD_BYTES = 10 * 1024 * 1024;   // 10 MB
+  const CHUNK_SIZE_BYTES = 5 * 1024 * 1024;         // 5 MB per chunk
 
-  function stopPolling(){
-    if(pollTimer){ clearTimeout(pollTimer); pollTimer = null; }
-    activeJobId = null;
+  // Keep this in sync with the backend's MAX_UPLOAD_MB config var — checking
+  // client-side means a too-large file gets rejected instantly instead of
+  // after minutes of uploading.
+  const MAX_UPLOAD_BYTES = 40 * 1024 * 1024;        // 40 MB
+
+  // How often to poll /status/{job_id} while a job is queued or running.
+  const POLL_INTERVAL_MS = 1500;
+
+  const progressBarFill = document.getElementById('progressBarFill');
+
+  function setProgress(pct){
+    progressBarFill.classList.remove('indeterminate');
+    progressBarFill.style.width = Math.max(0, Math.min(100, pct)) + '%';
   }
+  function setProgressIndeterminate(){
+    progressBarFill.classList.add('indeterminate');
+  }
+
+  function makeUploadId(){
+    if(window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    return 'up-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+  }
+
+  // A setTimeout that actually stops waiting the moment the job is cancelled,
+  // instead of finishing its delay first and only then noticing the abort.
+  function abortableDelay(ms, signal){
+    return new Promise((resolve, reject)=>{
+      if(signal.aborted) return reject(new DOMException('Aborted', 'AbortError'));
+      const t = setTimeout(resolve, ms);
+      signal.addEventListener('abort', ()=>{
+        clearTimeout(t);
+        reject(new DOMException('Aborted', 'AbortError'));
+      }, { once: true });
+    });
+  }
+
+  // The backend enqueues work and hands back a job_id instead of transcribing
+  // inline (Heroku's router would kill a long-running request). This polls
+  // /status until the worker finishes, logging state changes — never chunk
+  // mechanics — so it still reads as one continuous job to the user.
+  async function pollJobStatus(jobId, idToken, signal, logLine){
+    let lastLogged = null;
+    while(true){
+      const resp = await fetch(API_BASE_URL + '/status/' + jobId, {
+        headers: { 'Authorization': 'Bearer ' + idToken },
+        signal
+      });
+      if(!resp.ok){
+        let detail = resp.statusText;
+        try{ const errJson = await resp.json(); detail = errJson.detail || detail; }catch(e){}
+        throw new Error(detail);
+      }
+      const data = await resp.json();
+
+      if(data.status === 'finished'){
+        return data.result;
+      }
+      if(data.status === 'failed'){
+        throw new Error(data.error || 'Transcription failed.');
+      }
+
+      if(data.status !== lastLogged){
+        lastLogged = data.status;
+        if(data.status === 'queued') logLine('Queued for transcription...');
+        else if(data.status === 'started') logLine('Transcribing... this can take a while for longer files');
+      }
+
+      await abortableDelay(POLL_INTERVAL_MS, signal);
+    }
+  }
+
+  // Uploads a large file in sequential chunks, then asks the backend to
+  // reassemble and enqueue it. Returns a job_id, same as uploadWhole().
+  async function uploadInChunks(file, idToken, signal){
+    const uploadId = makeUploadId();
+    const totalChunks = Math.ceil(file.size / CHUNK_SIZE_BYTES);
+
+    for(let i = 0; i < totalChunks; i++){
+      const start = i * CHUNK_SIZE_BYTES;
+      const end = Math.min(file.size, start + CHUNK_SIZE_BYTES);
+      const chunkBlob = file.slice(start, end);
+
+      const chunkForm = new FormData();
+      chunkForm.append('chunk', chunkBlob, file.name);
+      chunkForm.append('uploadId', uploadId);
+      chunkForm.append('chunkIndex', String(i));
+      chunkForm.append('totalChunks', String(totalChunks));
+      chunkForm.append('filename', file.name);
+
+      const resp = await fetch(API_BASE_URL + '/upload-chunk', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + idToken },
+        body: chunkForm,
+        signal
+      });
+      if(!resp.ok){
+        let detail = resp.statusText;
+        try{ const errJson = await resp.json(); detail = errJson.detail || detail; }catch(e){}
+        throw new Error(detail);
+      }
+
+      // Upload phase counts for the first ~70% of the bar; the queued +
+      // transcribing phase after it takes the rest as an indeterminate fill.
+      setProgress(((i + 1) / totalChunks) * 70);
+    }
+
+    setProgressIndeterminate();
+
+    const finalForm = new FormData();
+    finalForm.append('uploadId', uploadId);
+    finalForm.append('model', selectedModel);
+    if(langSelect.value) finalForm.append('language', langSelect.value);
+
+    const finalResp = await fetch(API_BASE_URL + '/transcribe-chunked', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + idToken },
+      body: finalForm,
+      signal
+    });
+    if(!finalResp.ok){
+      let detail = finalResp.statusText;
+      try{ const errJson = await finalResp.json(); detail = errJson.detail || detail; }catch(e){}
+      throw new Error(detail);
+    }
+    return finalResp.json(); // { job_id, status }
+  }
+
+  // Single request for anything under the threshold — unchanged behavior.
+  async function uploadWhole(file, idToken, signal){
+    setProgressIndeterminate();
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('model', selectedModel);
+    if(langSelect.value) formData.append('language', langSelect.value);
+
+    const resp = await fetch(API_BASE_URL + '/transcribe', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + idToken },
+      body: formData,
+      signal
+    });
+    if(!resp.ok){
+      let detail = resp.statusText;
+      try{ const errJson = await resp.json(); detail = errJson.detail || detail; }catch(e){}
+      throw new Error(detail);
+    }
+    return resp.json(); // { job_id, status }
+  }
+
+  let activeAbortController = null;
+  const cancelBtn = document.getElementById('cancelBtn');
+
+  cancelBtn.addEventListener('click', ()=>{
+    if(activeAbortController){
+      activeAbortController.abort();
+    }
+  });
 
   transcribeBtn.addEventListener('click', async ()=>{
     if(!currentFile) return;
     if(typeof currentUser === 'undefined' || !currentUser){
-      document.getElementById('signInGate').style.display = 'flex';
+      document.getElementById('signInGate').classList.add('open');
       return;
     }
-
-    stopPolling();
+    if(currentFile.size > MAX_UPLOAD_BYTES){
+      alert('That file is larger than the ' + Math.round(MAX_UPLOAD_BYTES / (1024*1024)) + 'MB limit. Try a smaller file or a lower-resolution export.');
+      return;
+    }
     transcribeBtn.disabled = true;
     emptyState.style.display = 'none';
     transcriptBody.style.display = 'none';
@@ -1194,7 +1422,8 @@ document.documentElement.style.scrollBehavior = 'smooth';
     searchRow.style.display = 'none';
     progressState.style.display = 'flex';
     progressLog.innerHTML = '';
-    progressHeadline.textContent = 'Uploading file…';
+    setProgress(0);
+    progressHeadline.textContent = "Loading Whisper model '"+selectedModel+"'…";
 
     const logLine = (text, ok, isError)=>{
       const d = document.createElement('div');
@@ -1202,104 +1431,51 @@ document.documentElement.style.scrollBehavior = 'smooth';
       if(isError) d.style.color = '#c0392b';
       d.textContent = text;
       progressLog.appendChild(d);
-      progressLog.scrollTop = progressLog.scrollHeight;
     };
 
     const isVideo = isVideoFile(currentFile);
-    logLine('$ upload "'+currentFile.name+'" --model '+selectedModel+(langSelect.value ? ' --lang '+langSelect.value : ' --lang auto'));
+    logLine('$ python transcribe.py "'+currentFile.name+'" --model '+selectedModel+(langSelect.value ? ' --lang '+langSelect.value : ''));
+
+    activeAbortController = new AbortController();
+    const signal = activeAbortController.signal;
 
     try{
-      // ---- 1. POST /transcribe — upload the file, get back a job_id ----
       const idToken = await currentUser.getIdToken();
 
-      const formData = new FormData();
-      formData.append('file', currentFile);
-      formData.append('model', selectedModel);
-      if(langSelect.value) formData.append('language', langSelect.value);
-
-      const startResp = await fetch(API_BASE_URL + '/transcribe', {
-        method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + idToken },
-        body: formData
-        // Content-Type is NOT set manually — the browser sets the multipart boundary.
-      });
-
-      if(!startResp.ok){
-        let detail;
-        try{ const errJson = await startResp.json(); detail = errJson.detail; }catch(e){}
-        if(startResp.status === 401) throw new Error(detail || 'Your sign-in has expired. Please sign in again.');
-        if(startResp.status === 400) throw new Error(detail || 'Invalid model selection.');
-        if(startResp.status === 413) throw new Error(detail || 'This file is too large for the current upload limit.');
-        if(startResp.status === 500) throw new Error('The server hit a problem on its end. Please try again later.');
-        throw new Error(detail || ('Request failed: '+startResp.status));
+      if(isVideo){
+        logLine('Extracting audio track (ffmpeg)...');
       }
-
-      const startData = await startResp.json();
-      activeJobId = startData.job_id;
-      logLine('Queued'+(isVideo ? ' — audio will be extracted from the video server-side' : '')+'. Job ID: '+activeJobId);
       progressHeadline.textContent = isVideo ? 'Extracting audio & transcribing…' : 'Transcribing audio…';
-      logLine("Running Whisper model '"+selectedModel+"'… this can take a while for longer files");
+      logLine('Uploading '+currentFile.name+' ...');
 
-      // ---- 2. GET /status/{job_id} — poll until finished or failed ----
-      const pollStart = Date.now();
-      let sawStarted = false;
+      // Same single job either way — chunking is an internal transport
+      // detail, never surfaced in the UI or the logged "command."
+      const submitted = currentFile.size > CHUNK_THRESHOLD_BYTES
+        ? await uploadInChunks(currentFile, idToken, signal)
+        : await uploadWhole(currentFile, idToken, signal);
 
-      const poll = async ()=>{
-        if(activeJobId !== startData.job_id) return; // superseded by a newer job
-        try{
-          const statusResp = await fetch(API_BASE_URL + '/status/' + startData.job_id, {
-            headers: { 'Authorization': 'Bearer ' + (await currentUser.getIdToken()) }
-          });
+      // The backend enqueues rather than transcribing inline, so the result
+      // comes back via polling, not in this response.
+      const result = await pollJobStatus(submitted.job_id, idToken, signal, logLine);
 
-          if(!statusResp.ok){
-            let detail;
-            try{ const errJson = await statusResp.json(); detail = errJson.detail; }catch(e){}
-            if(statusResp.status === 401) throw new Error(detail || 'Your sign-in has expired. Please sign in again.');
-            if(statusResp.status === 404) throw new Error(detail || "This job wasn't found — it may have expired (results are kept for 1 hour after finishing).");
-            throw new Error(detail || ('Request failed: '+statusResp.status));
-          }
+      segments = ((result && result.segments) || []).map(s => ({ start: s.start, end: s.end, text: s.text }));
 
-          const statusData = await statusResp.json();
-
-          if(statusData.status === 'started' && !sawStarted){
-            sawStarted = true;
-            logLine('Transcription started…');
-          }
-
-          if(statusData.status === 'finished'){
-            segments = (statusData.result.segments || []).map(s => ({ start: s.start, end: s.end, text: s.text }));
-            logLine('Done. Transcript saved to: '+baseName+'.txt', true);
-            stopPolling();
-            renderTranscript();
-            saveToHistory();
-            transcribeBtn.disabled = false;
-            transcribeBtn.textContent = 'Transcribe again';
-            return;
-          }
-
-          if(statusData.status === 'failed'){
-            throw new Error(statusData.error || 'Transcription failed.');
-          }
-
-          // still queued/started — keep polling
-          if(Date.now() - pollStart > POLL_TIMEOUT_MS){
-            throw new Error('Timed out waiting for transcription.');
-          }
-          pollTimer = setTimeout(poll, POLL_INTERVAL_MS);
-        }catch(err){
-          stopPolling();
-          logLine('Error: ' + (err && err.message ? err.message : 'transcription failed.'), false, true);
-          progressHeadline.textContent = 'Transcription failed';
-          transcribeBtn.disabled = false;
-          transcribeBtn.textContent = 'Transcribe again';
-        }
-      };
-
-      pollTimer = setTimeout(poll, POLL_INTERVAL_MS);
+      setProgress(100);
+      logLine('Done. Transcript saved to: '+baseName+'.txt', true);
+      renderTranscript();
+      saveToHistory();
     }catch(err){
-      stopPolling();
-      logLine('Error: ' + (err && err.message ? err.message : 'transcription failed.'), false, true);
-      progressHeadline.textContent = 'Transcription failed';
+      if(err && err.name === 'AbortError'){
+        logLine('Transcription cancelled.');
+        progressHeadline.textContent = 'Cancelled';
+        progressState.style.display = 'none';
+        emptyState.style.display = 'flex';
+      } else {
+        logLine('Error: ' + (err && err.message ? err.message : 'transcription failed.'), false, true);
+        progressHeadline.textContent = 'Transcription failed';
+      }
+    }finally{
+      activeAbortController = null;
       transcribeBtn.disabled = false;
       transcribeBtn.textContent = 'Transcribe again';
     }
